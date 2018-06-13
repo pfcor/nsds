@@ -1,5 +1,6 @@
 import pkg_resources
 import json
+import re
 
 
 # # # # # # # # # #
@@ -246,22 +247,24 @@ def drop_table(table_name, cursor):
     q = f'DROP TABLE {table_name}'
     cursor.execute(q)
 
-def insert_data_rows(table_name, sql_connection, cols, rows, db='oracle'):
+def insert_rows(table_name, sql_connection, cols, rows, db='oracle'):
     try:
-        db, connection_type = tuple(re.search(".*'(.+?)'", a).group(1).split('.'))
-    except:
-        print(f'sql_connection inválido: {sql_connection}')
-        raise
+        db, connection_type = tuple(re.search(".*'(.+?)'", str(sql_connection)).group(1).split('.'))
+    except AttributeError:
+        try:
+            db, connection_type = tuple( re.search("<(.+?) ", str(sql_connection)).group(1).split('.'))
+        except:
+            print(f'sql_connection inválido: {sql_connection}')
+            raise
 
-    if '.Connection' in str(type(sql_connection)):
+    if connection_type.lower() == 'connection':
         cursor = sql_connection.cursor()
-    elif '.Cursor' in str(type(sql_connection)):
+    elif connection_type.lower() == 'cursor':
         cursor = sql_connection
     else:
         print(f'sql_connection inválido: {sql_connection}')
         raise TypeError
 
-    if ''
     columns = [c.upper() for c in cols]
     if db == 'oracle':
         q = f"""
@@ -269,11 +272,15 @@ def insert_data_rows(table_name, sql_connection, cols, rows, db='oracle'):
         values ({', '.join(f':{i}' for i in range(1, len(columns)+1))})
         """
         
-    elif db == 'sqlite':
+    elif db in ('sqlite', 'sqlite3'):
         q = f"""
         insert into {table_name}  
         values ({', '.join('?' for i in range(1, len(columns)+1))})
         """
+    
+    else:
+        print(f'db {db} não implementada')
+        raise ValueError
 
     cursor.executemany(q, rows)
     try:
