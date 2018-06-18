@@ -248,14 +248,18 @@ def drop_table(table_name, cursor):
     cursor.execute(q)
 
 def insert_rows(table_name, sql_connection, cols, rows, db='oracle'):
+
     try:
         db, connection_type = tuple(re.search(".*'(.+?)'", str(sql_connection)).group(1).split('.'))
     except AttributeError:
         try:
-            db, connection_type = tuple( re.search("<(.+?) ", str(sql_connection)).group(1).split('.'))
+            db, connection_type = tuple(re.search("<(.+?) ", str(sql_connection)).group(1).split('.'))
         except:
-            print(f'sql_connection inválido: {sql_connection}')
-            raise
+            try:
+                connection_type, db = tuple(re.search("(.+?)://", str(sql_connection)).group(1).split('('))
+            except:
+                print(f'sql_connection inválido: {sql_connection}')
+                raise
 
     if connection_type.lower() == 'connection':
         cursor = sql_connection.cursor()
@@ -266,25 +270,23 @@ def insert_rows(table_name, sql_connection, cols, rows, db='oracle'):
         raise TypeError
 
     columns = [c.upper() for c in cols]
-    if db == 'oracle':
+    if db.lower() in ('cx_oracle'):
         q = f"""
         insert into {table_name} ({', '.join(columns)}) 
         values ({', '.join(f':{i}' for i in range(1, len(columns)+1))})
         """
-        
-    elif db in ('sqlite', 'sqlite3'):
+    elif db.lower() in ('sqlite', 'sqlite3'):
         q = f"""
         insert into {table_name}  
         values ({', '.join('?' for i in range(1, len(columns)+1))})
         """
-    
     else:
         print(f'db {db} não implementada')
         raise ValueError
 
     cursor.executemany(q, rows)
-    try:
-        sql_connection.commit()
-    except:
-        pass
+    # try:
+    #     sql_connection.commit()
+    # except:
+    #     pass
 
