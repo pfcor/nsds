@@ -18,9 +18,14 @@ import cx_Oracle, sqlite3, sqlalchemy
 
 def get_connection_type(connection_type):
     """
-    recebe connection_type [str ou list/tuple] e retorna uma lista de tipos de conexão
-    pronta para ser utilizada pelas funções de conexão (connect_oracle e connect_sqlite)
-    """
+    Função auxiliar utilizada nas funções de conexão para formatar entrada de tipo de conexão
+    
+    inputs:
+    :: connection_type [str ou list/tuple] -> tipo(s) de conexão a ser(em) retornado(s) | ["connection" (default), "cursor", "engine", "all"]
+
+    output:
+    :: [list] -> conexões formatadas para funções de conexão
+    """ 
 
     if isinstance(connection_type, str): # caso de ser string
         connection_type = connection_type.lower()
@@ -49,6 +54,13 @@ def get_connection_type(connection_type):
     return connection_type
 
 def get_sas_bigdata_connection_info():
+    """
+    Função auxiliar que obtém dados de conexão para o schema SAS_BIGDATA no Oracle.
+
+    output:
+    :: [dict] com dados de conexão "user", "password", "host" e "service"
+    """
+
     resource_package = __name__
     resource_path = '/'.join(('oracle_connection_config.json',))
     return json.loads(pkg_resources.resource_string(resource_package, resource_path).decode('utf-8'))  
@@ -123,8 +135,18 @@ def connect_oracle(**kwargs):
 
 def connect_sas_bigdata(connection_type=['connection', 'cursor'], encoding='utf-8'):
     """
-    Atalho para conectar ao 'schema' do time de ciência de dados no Oracle sem a necessidade
-    de inserir dados da conta, utilizando o arquivo 'oracle_connection_config.json'
+    Conexão com o 'schema' SAS_BIGDATA do time de DS no Oracle. Utiliza o arquivo 'oracle_connection_config.json',
+    que deve estar na mesma pasta deste script.
+
+    inputs:
+    :: connection_type [str ou list] -> define o tipo de conexão retornado | ["connection" (default), "cursor", "engine", "all"]
+    :: encoding [str] -> encoding a ser utilizado na conexão | default: "utf-8"
+
+    output:
+    :: objeto conector ou lista de objetos conectores ao SAS_BIGADATA no Oracle definido por connection_type,
+       no caso de uma lista de tipos de conexão, independente da ordem entrada, o retorno será 
+       na ordem: connection > cursor > engine. se connection e cursor forem inseridos, o cursor
+       será obtido da connection e não de um objeto criado em separado. 
     """
     connection_info = get_sas_bigdata_connection_info()
     return connect_oracle(connection_info=connection_info, connection_type=connection_type, encoding=encoding)
