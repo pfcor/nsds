@@ -133,6 +133,7 @@ def format_columns(**kwargs):
 
     return ', '.join([ct.upper() for ct in cols_types])
 
+
 #
 # CONFIG
 #
@@ -145,12 +146,19 @@ def save_oracle_connection_info(**kwargs):
         password = kwargs.get('password')
         host = kwargs.get('host')
         service = kwargs.get('service')
+
+        assert user, "User missing"
+        assert password, "Password missing"
+        assert host, "Host missing"
+        assert service, "Service missing"
+
         new_connection_info = {'user': user, 'password': password, 'host': host, 'service': service}
+    
     else:
         new_connection_info = kwargs.get('connection_info')
 
     try:
-        connection_info = get_oracle_connection_info()
+        connection_info = get_oracle_connection_info(v=False)
     except:
         connection_info = {}
 
@@ -166,7 +174,7 @@ def del_oracle_connection_info(schema, filename='oracle_connection_config.json')
     with open(filename, 'w') as fp:
         json.dump(connection_info, fp, indent=4)
 
-def get_oracle_connection_info(schema=None, filename='oracle_connection_config.json'):
+def get_oracle_connection_info(schema=None, filename='oracle_connection_config.json', v=True):
     """
     Obtém dados de conexão para o schema no Oracle.
 
@@ -177,7 +185,9 @@ def get_oracle_connection_info(schema=None, filename='oracle_connection_config.j
         with open(filename) as config_file:
             oracle_connection_info = json.loads(config_file.read())
     except FileNotFoundError:
-        print(f'Arquivo de config {filename} não encontrado. Conferir se ele está na mesma pasta desse script')
+        if v:
+            print(f'Arquivo {filename} não encontrado. Verificar se está na mesma pasta do script')
+        raise
     
     # resource_package = __name__
     # resource_path = '/'.join(('oracle_connection_config.json',))
@@ -276,49 +286,56 @@ def connect_sas_bigdata(connection_type=['connection', 'cursor'], encoding='utf-
     connection_info = get_oracle_connection_info('sas_bigdata')
     return connect_oracle(connection_info=connection_info, connection_type=connection_type, encoding=encoding)
 
-def find_table_oracle(partial_name, sbd_only=False, sbd_owned=False):
-    oracle_connection, oracle_cursor = connect_sas_bigdata()
+def find_table_oracle(partial_table_name=None, sbd_only=False, sbd_owned=False):
+    oracle_connection, oracle_cursor = connect_sas_bigdata(['connection', 'cursor'])
 
     if sbd_only or sbd_owned:
         assert bool(sbd_only) != bool(sbd_owned), "sdb_only and sdb_owned can't be True at the same time"
         if sbd_only:
-            table = 'all_tables'
+            t = 'all'
         elif sbd_owned:
-            table = 'user_tables'
+            t = 'user'
     else:
-        table = 'dba_tables'
+        t = 'dba'
+
+    if not partial_table_name:
+        partial_table_name = ''
+    q = f"""SELECT {"owner, " if not sbd_owned else "'SAS_BIGDATA', "} table_name FROM {t}_tables where table_name like \'%{partial_table_name.upper()}%\'"""
     
-    q = f'SELECT owner, table_name FROM {table}'
-    oracle_cursor.execute(q) #.fetchall()
-    return [(x[0], x[1]) for x in oracle_cursor if partial_name.lower() in x[1].lower()]
+    matches = oracle_cursor.execute(q).fetchall()
+    # matches = [(x[0], x[1]) for x in oracle_cursor]
+    oracle_connection.close()
+    return matches
 
-# def find_column_oracle(partial_name, sbd_only=False, sbd_owned=False):
-#     oracle_connection, oracle_cursor = connect_sas_bigdata(['connection', 'cursor'])
+def find_column_oracle(partial_column_name, partial_table_name=None, sbd_only=False, sbd_owned=False):
+    oracle_connection, oracle_cursor = connect_sas_bigdata(['connection', 'cursor'])
 
-#     if sbd_only or sbd_owned:
-#         assert bool(sbd_only) != bool(sbd_owned), "sdb_only and sdb_owned can't be True at the same time"
-#         if sbd_only:
-#             table = 'all_tables'
-#         elif sbd_owned:
-#             table = 'user_tables'
-#     else:
-#         table = 'dba_tables'
+    if sbd_only or sbd_owned:
+        assert bool(sbd_only) != bool(sbd_owned), "sdb_only and sdb_owned can't be True at the same time"
+        if sbd_only:
+            t = 'all'
+        elif sbd_owned:
+            t = 'user'
+    else:
+        t = 'dba'
 
-#     q = f'select owner, table_name from {table}'
-#     oracle_cursor.execute(q)
-#     table_names = [f'{schema}.{table}' for schema, table in oracle_cursor]
-#     return table_names
-#     q = "SELECT column_name FROM user_tab_cols"
-#     r = oracle_cursor.execute(q).fetchall()
-#     for c in r:
-#         print(c)
-#     return
+    q = f"""
+    select 
+        {"tabs.owner, " if not sbd_owned else "'SAS_BIGDATA', "}tabs.table_name, cols.column_name
+    from 
+        {t}_tables tabs
+    INNER JOIN
+        {t}_tab_cols cols
+        ON tabs.table_name = cols.table_name
+    WHERE 
+        tabs.table_name LIKE '%{partial_table_name.upper() if partial_table_name else ''}%'
+        AND cols.column_name LIKE '%{partial_column_name.upper()}%'
+    """
 
-#     for table in table_names:
-#         # cols = [x[0] for x in res2]
-#         for col, _ in r:
-#             if partial_name in col:
-#                 print("{0}: {1}".format(table, e))
+    oracle_cursor.execute(q)
+    matches = oracle_cursor.execute(q).fetchall()
+    oracle_connection.close()
+    return matches
 
 
 
