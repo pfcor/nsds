@@ -90,9 +90,9 @@ def get_db_module_connectortype(sql_connector):
 
 def get_cursor(sql_connector):
 
-    module, connector_type = get_db_connectiontype(sql_connector)
-    module, connector_type = module.lower(), connector_type.lower() 
-    
+    db, module, connector_type = get_db_module_connectortype(sql_connector)
+    db, module, connector_type = db.lower(), module.lower(), connector_type.lower() 
+
     implemented = ('cx_oracle', 'sqlite3', 'sqlalchemy')
     if module not in implemented:
         raise NotImplementedError
