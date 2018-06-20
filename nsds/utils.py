@@ -1,6 +1,7 @@
 import pkg_resources
 import json
 import re
+import os
 
 
 # # # # # # # # # #
@@ -16,9 +17,9 @@ import cx_Oracle, sqlite3, sqlalchemy
 # AUX
 #
 
-def get_connection_type(connection_type):
+def format_connection_type(connection_type):
     """
-    Função auxiliar utilizada nas funções de conexão para formatar entrada de tipo de conexão
+    Formatar entrada de tipo de conexão para uso nas funções de conexão a bancos de dados.
     
     inputs:
     :: connection_type [str ou list/tuple] -> tipo(s) de conexão a ser(em) retornado(s) | ["connection" (default), "cursor", "engine", "all"]
@@ -53,17 +54,141 @@ def get_connection_type(connection_type):
         connection_type = ['cc'] + connection_type[2:] # cc (connection/cursor) é unificado para garantir que o cursor retornado foi criado a partir da conexão também retornada 
     return connection_type
 
-def get_sas_bigdata_connection_info():
+def get_db_module_connectortype(sql_connector):
     """
-    Função auxiliar que obtém dados de conexão para o schema SAS_BIGDATA no Oracle.
+    A partir do objeto conector a banco de dados inserido, retorna-se o banco e o tipo de conexão
+
+    inputs:
+    :: connector [connector object] -> conector a um banco de dados
+
+    output:
+    :: [tuple de str] com (db, tipo de conexão) 
+    """
+
+    connector_class = re.search(r"'(.+?)'", str(type(sql_connector))).group(1).split('.')
+    module, connector_type = connector_class[0].lower(), connector_class[-1].lower()
+    if 'oracle' in module:
+        db = 'oracle'
+    elif 'sqlite' in module:
+        db = 'sqlite'
+    else:
+        try:
+            db = re.search(r"(.+?)://", str(sql_connector)).group(1).split('(')[1]
+        except AttributeError:
+            print(f'Conector inválido: {sql_connector}')
+            raise
+    return db, module, connector_type
+
+    try:
+        a = re.search(r"^<(.+?) ", str(sql_connector)).group(1).split('.')[0]
+    except AttributeError:
+        try:
+            a = re.search(r"(.+?)://", str(sql_connector)).group(1).split('(')[1]
+        except AttributeError:
+            print(f'Conector inválido: {sql_connector}')
+            raise
+
+def get_cursor(sql_connector):
+
+    module, connector_type = get_db_connectiontype(sql_connector)
+    module, connector_type = module.lower(), connector_type.lower() 
+    
+    implemented = ('cx_oracle', 'sqlite3', 'sqlalchemy')
+    if module not in implemented:
+        raise NotImplementedError
+    if module == 'sqlalchemy':
+        if connector_type == 'engine':
+            cursor = sql_connector.connect()
+        elif connector_type == 'connection':
+            cursor = sql_connector
+    else:
+        if connector_type == 'connection':
+            cursor = sql_connector.cursor()
+        elif connector_type == 'cursor':
+            cursor = sql_connector
+    return cursor
+
+def format_columns(**kwargs):
+
+    cols_types = kwargs.get('cols_types')
+    if not cols_types:
+        cols = kwargs.get('cols', kwargs.get('columns'))
+        types = kwargs.get('types')
+        assert cols and types, 'Nomes de colunas (cols) e seus tipos (types) devem ser inseridos'
+        assert len(cols) == len(types), 'cols e types devem ter o mesmo tamanho'
+        cols_types = [' '.join(col_typ) for col_typ in zip(cols, types)]
+    elif isinstance(cols_types, (list, tuple)):
+        assert len(cols_types) > 0, 'Lista de colunas e tipos (cols_types) vazia'
+        if isinstance(cols_types[0], (list, tuple)):
+            assert len(cols_types[0]) == 2, f'Valor de cols_types[0] inválido: {cols_types[0]}'
+            cols_types = [f'{col_typ[0]} {col_typ[1]}' for col_typ in cols_types]
+        elif isinstance(cols_types[0], str):
+            pass
+        else:
+            raise ValueError
+    elif isinstance(cols_types, dict):
+        cols_types = [f'{col} {typ}' for col, typ in cols_types.items()]
+    else:
+        raise ValueError
+
+    return ', '.join([ct.upper() for ct in cols_types])
+
+#
+# CONFIG
+#
+
+def save_oracle_connection_info(**kwargs):
+    
+    if not 'connection_info' in kwargs: # se o dict for colocado será utilizado, ou seja, deve estar completo
+        user = kwargs.get('schema')
+        user = kwargs.get('user')
+        password = kwargs.get('password')
+        host = kwargs.get('host')
+        service = kwargs.get('service')
+        new_connection_info = {'user': user, 'password': password, 'host': host, 'service': service}
+    else:
+        new_connection_info = kwargs.get('connection_info')
+
+    try:
+        connection_info = get_oracle_connection_info()
+    except:
+        connection_info = {}
+
+    connection_info.update({user.upper(): new_connection_info})
+
+    filename = kwargs.get('filename', 'oracle_connection_config.json')
+    with open(filename, 'w') as fp:
+        json.dump(connection_info, fp, indent=4)
+
+def del_oracle_connection_info(schema, filename='oracle_connection_config.json'):
+    connection_info = get_oracle_connection_info()
+    del connection_info[schema.upper()]
+    with open(filename, 'w') as fp:
+        json.dump(connection_info, fp, indent=4)
+
+def get_oracle_connection_info(schema=None, filename='oracle_connection_config.json'):
+    """
+    Obtém dados de conexão para o schema no Oracle.
 
     output:
     :: [dict] com dados de conexão "user", "password", "host" e "service"
     """
+    try:
+        with open(filename) as config_file:
+            oracle_connection_info = json.loads(config_file.read())
+    except FileNotFoundError:
+        print(f'Arquivo de config {filename} não encontrado. Conferir se ele está na mesma pasta desse script')
+    
+    # resource_package = __name__
+    # resource_path = '/'.join(('oracle_connection_config.json',))
+    # print(pkg_resources.resource_string(resource_package, resource_path))
+    # oracle_connection_info = json.loads(pkg_resources.resource_string(resource_package, resource_path).decode('utf-8'))
+    
+    if schema:
+        return oracle_connection_info[schema.upper()]
+    else:
+        return oracle_connection_info
 
-    resource_package = __name__
-    resource_path = '/'.join(('oracle_connection_config.json',))
-    return json.loads(pkg_resources.resource_string(resource_package, resource_path).decode('utf-8'))  
 
 #
 # ORACLE
@@ -87,7 +212,7 @@ def connect_oracle(**kwargs):
     """
 
     # criando a lista de conexões a serem retornadas
-    connection_type = get_connection_type(kwargs.get('connection_type', ['connection', 'cursor']))
+    connection_type = format_connection_type(kwargs.get('connection_type', ['connection', 'cursor']))
 
     # obtendo enconding
     encoding = kwargs.get('encoding', 'utf-8')
@@ -148,7 +273,7 @@ def connect_sas_bigdata(connection_type=['connection', 'cursor'], encoding='utf-
        na ordem: connection > cursor > engine. se connection e cursor forem inseridos, o cursor
        será obtido da connection e não de um objeto criado em separado. 
     """
-    connection_info = get_sas_bigdata_connection_info()
+    connection_info = get_oracle_connection_info('sas_bigdata')
     return connect_oracle(connection_info=connection_info, connection_type=connection_type, encoding=encoding)
 
 def find_table_oracle(partial_name, sbd_only=False, sbd_owned=False):
@@ -204,7 +329,7 @@ def find_table_oracle(partial_name, sbd_only=False, sbd_owned=False):
 def connect_sqlite(dbpath, **kwargs):
 
     # criando a lista de conexões a serem retornadas
-    connection_type = get_connection_type(kwargs.get('connection_type', ['connection', 'cursor']))
+    connection_type = format_connection_type(kwargs.get('connection_type', ['connection', 'cursor']))
 
     # construindo strings de conexão
     connection_string = dbpath
@@ -234,42 +359,34 @@ def connect_sqlite(dbpath, **kwargs):
 # OPERATIONS
 #
 
-def create_table(table_name, cursor, **kwargs):
+def create_table(table_name, sql_connector, **kwargs):
     """Cria tabela com nome table_name por meio do cursor"""
 
-    # definindo cols_types, lista de str 'column_name column_type'
-    cols_types = kwargs.get('cols_types')
-    if not cols_types:
-        cols = kwargs.get('cols', kwargs.get('columns'))
-        types = kwargs.get('types')
-        assert cols and types, 'Nomes de colunas (cols) e seus tipos (types) devem ser inseridos'
-        assert len(cols) == len(types), 'cols e types devem ter o mesmo tamanho'
-        cols_types = [' '.join(col_typ) for col_typ in zip(cols, types)]
-    elif isinstance(cols_types, (list, tuple)):
-        assert len(cols_types) > 0, 'Lista de colunas e tipos (cols_types) vazia'
-        if isinstance(cols_types[0], (list, tuple)):
-            assert len(cols_types[0]) == 2, f'Valor de cols_types[0] inválido: {cols_types[0]}'
-            cols_types = [f'{col_typ[0]} {col_typ[1]}' for col_typ in cols_types]
-        elif isinstance(cols_types[0], str):
-            pass
-        else:
-            raise ValueError
-    elif isinstance(cols_types, dict):
-        cols_types = [f'{col} {typ}' for col, typ in cols_types.items()]
+    # a função aceita qualquer tipo de conexão. aqui extrai-se o cursor necessário para criar-se a tabela
+    cursor = get_cursor(sql_connector)
+    assert cursor
 
     # montando a query
-    columns = ', '.join([ct.upper() for ct in cols_types])
+    columns = format_columns(**kwargs)
     if_not_exists = kwargs.get('if_not_exists', False) # por padrão apenas cria sem checar se já existe ou não
     q = f'CREATE TABLE {"IF NOT EXISTS " if if_not_exists else ""}{table_name} ({columns})'
     
     # construíndo a tabela
     cursor.execute(q)
 
-def drop_table(table_name, cursor):
+def drop_table(table_name, sql_connector):
+
+    # a função aceita qualquer tipo de conexão. aqui extrai-se o cursor necessário para dropar-se a tabela
+    cursor = get_cursor(sql_connector)
+    assert cursor
+
     q = f'DROP TABLE {table_name}'
     cursor.execute(q)
 
-def insert_rows(table_name, sql_connection, cols, rows, db='oracle'):
+def insert_rows(table_name, sql_connector, cols, rows, db='oracle'):
+    """
+    sql_connector: cx_Oracle/sqlite3.Connection, cx_Oracle/sqlite3.Cursor, Engine
+    """
 
     try:
         db, connection_type = tuple(re.search(".*'(.+?)'", str(sql_connection)).group(1).split('.'))
@@ -283,6 +400,8 @@ def insert_rows(table_name, sql_connection, cols, rows, db='oracle'):
                 print(f'sql_connection inválido: {sql_connection}')
                 raise
 
+    print(db, connection_type)
+    return
     if connection_type.lower() == 'connection':
         cursor = sql_connection.cursor()
     elif connection_type.lower() == 'cursor':
