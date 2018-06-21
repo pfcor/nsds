@@ -338,7 +338,6 @@ def find_column_oracle(partial_column_name, partial_table_name=None, sbd_only=Fa
     return matches
 
 
-
 #
 # SQLITE
 #
@@ -400,51 +399,41 @@ def drop_table(table_name, sql_connector):
     q = f'DROP TABLE {table_name}'
     cursor.execute(q)
 
-def insert_rows(table_name, sql_connector, cols, rows, db='oracle'):
+def insert_rows(rows, cols, table_name, sql_connector, db='oracle'):
     """
     sql_connector: cx_Oracle/sqlite3.Connection, cx_Oracle/sqlite3.Cursor, Engine
     """
 
     try:
-        db, connection_type = tuple(re.search(".*'(.+?)'", str(sql_connection)).group(1).split('.'))
-    except AttributeError:
-        try:
-            db, connection_type = tuple(re.search("<(.+?) ", str(sql_connection)).group(1).split('.'))
-        except:
-            try:
-                connection_type, db = tuple(re.search("(.+?)://", str(sql_connection)).group(1).split('('))
-            except:
-                print(f'sql_connection inválido: {sql_connection}')
-                raise
-
-    print(db, connection_type)
-    return
-    if connection_type.lower() == 'connection':
-        cursor = sql_connection.cursor()
-    elif connection_type.lower() == 'cursor':
-        cursor = sql_connection
-    else:
-        print(f'sql_connection inválido: {sql_connection}')
-        raise TypeError
+        db, module, connection = get_db_module_connectortype(sql_connector)
+        cursor = get_cursor(sql_connector)
+    except:
+        print(f'sql_connector inválido: {sql_connector}')
+        raise
 
     columns = [c.upper() for c in cols]
-    if db.lower() in ('cx_oracle'):
+    if db == 'oracle':
         q = f"""
         insert into {table_name} ({', '.join(columns)}) 
         values ({', '.join(f':{i}' for i in range(1, len(columns)+1))})
         """
-    elif db.lower() in ('sqlite', 'sqlite3'):
+    elif db == 'sqlite':
         q = f"""
         insert into {table_name}  
         values ({', '.join('?' for i in range(1, len(columns)+1))})
         """
     else:
         print(f'db {db} não implementada')
-        raise ValueError
+        raise NotImplementedError
 
     cursor.executemany(q, rows)
-    # try:
-    #     sql_connection.commit()
-    # except:
-    #     pass
 
+def insert_df(df, table_name, sql_connector):
+    columns = [c.upper() for c in df.columns]
+    rows = df.values.tolist()
+    insert_rows(table_name=table_name, sql_connector=sql_connector, cols=columns, rows=rows)
+    sql_connector.commit()
+
+
+if __name__ == '__main__':
+    pass
