@@ -13,6 +13,7 @@ import os
 
 import cx_Oracle, sqlite3, sqlalchemy
 
+
 #
 # AUX
 #
@@ -337,6 +338,32 @@ def find_column_oracle(partial_column_name, partial_table_name=None, sbd_only=Fa
     oracle_connection.close()
     return matches
 
+def table_exists(table_name, sbd_only=False, sbd_owned=False):
+    oracle_connection, oracle_cursor = connect_sas_bigdata(['connection', 'cursor'])
+
+    if sbd_only or sbd_owned:
+        assert bool(sbd_only) != bool(sbd_owned), "sdb_only and sdb_owned can't be True at the same time"
+        if sbd_only:
+            t = 'all'
+        elif sbd_owned:
+            t = 'user'
+    else:
+        t = 'dba'
+
+    q = f"""
+    select 
+        count(*)
+    from 
+        {t}_objects
+    where 
+        object_type in ('TABLE','VIEW')
+    and 
+        object_name = '{table_name.upper()}'
+    """
+
+    oracle_cursor.execute(q)
+    return bool(oracle_cursor.fetchone()[0])
+
 
 #
 # SQLITE
@@ -428,12 +455,50 @@ def insert_rows(rows, cols, table_name, sql_connector, db='oracle'):
 
     cursor.executemany(q, rows)
 
-def insert_df(df, table_name, sql_connector):
+def insert_df(df, table_name, sql_connector, if_exists='fail'):
+
     columns = [c.upper() for c in df.columns]
+    types = [t.upper() for t in get_types_pd2oracle(df)]
     rows = df.values.tolist()
+
+    if table_exists(table_name, sbd_owned=True):
+        if if_exists == 'replace':
+            drop_table(table_name, sql_connector)
+            create_table(table_name, sql_connector, cols=columns, types=types)
+        elif if_exists == 'fail':
+            print('Tabela já existe')
+            raise Exception
+    else:
+        create_table(table_name, sql_connector, cols=columns, types=types)
+    
     insert_rows(table_name=table_name, sql_connector=sql_connector, cols=columns, rows=rows)
     sql_connector.commit()
 
+def get_types_pd2oracle(df):
+
+    types = []
+    for t in df.dtypes:
+        if 'int' in str(t):
+            types.append('integer')
+        elif 'float' in str(t):
+            types.append('float')
+        elif 'object' in str(t):
+            types.append('varchar(40)')
+        elif 'date' in str(t):
+            types.append('date')
+        else:
+            types.append('varchar(40)')
+    return types
+
 
 if __name__ == '__main__':
-    pass
+    import pandas as pd
+    o_con, o_cur, o_eng = connect_sas_bigdata('all')
+    table_name = 'p_teste_nsds'
+
+    d = pd.DataFrame({
+        'nome': ['aaa', 'bbb', 'ccc'],
+        'idade': [10, 20, 30]
+    })
+
+    insert_df(d, table_name, o_con, if_exists='append')
