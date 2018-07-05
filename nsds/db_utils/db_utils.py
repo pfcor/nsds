@@ -1,8 +1,11 @@
+from . import helpers
+
 import pkg_resources
 import json
 import re
 import os
 import cx_Oracle, sqlite3, sqlalchemy
+
 
 # # # # # # # # # #
 #                 #
@@ -10,133 +13,6 @@ import cx_Oracle, sqlite3, sqlalchemy
 #                 #
 # # # # # # # # # #
 
-
-#
-# AUX
-#
-
-def format_connection_type(connection_type):
-    """
-    Formatar entrada de tipo de conexão para uso nas funções de conexão a bancos de dados.
-    
-    inputs:
-    :: connection_type [str ou list/tuple] -> tipo(s) de conexão a ser(em) retornado(s) | ["connection" (default), "cursor", "engine", "all"]
-
-    output:
-    :: [list] -> conexões formatadas para funções de conexão
-    """ 
-
-    if isinstance(connection_type, str): # caso de ser string
-        connection_type = connection_type.lower()
-        if connection_type == 'all':
-            connection_type = ['cc', 'engine']
-        elif not connection_type in ['connection', 'cursor', 'engine']:
-            print(f'invalid connection_type input: {connection_type}')
-            raise ValueError
-        else:
-            connection_type = [connection_type]
-
-    elif isinstance(connection_type, (list, tuple)): # se já for inserido list/tuple
-        connection_type = list(set(connection_type)) # excluindo duplicatas
-
-        for i, ct in enumerate(connection_type.copy()):
-            try:
-                ct = ct.lower()
-                connection_type[i] = ct
-            except AttributeError:
-                print(f'invalid connection_type input: {ct}')
-                raise ValueError
-            if ct not in ['connection', 'cursor', 'engine']:
-                print(f'invalid connection_type input: {ct}')
-                raise ValueError
-
-        connection_type.sort() 
-        if connection_type[:2] == ['connection', 'cursor']:
-            connection_type = ['cc'] + connection_type[2:] # cc (connection/cursor) é unificado para garantir que o cursor retornado foi criado a partir da conexão também retornada 
-    
-    return connection_type
-
-
-def get_db_module_connectortype(sql_connector):
-    """
-    A partir do objeto conector a banco de dados inserido, retorna-se o banco e o tipo de conexão
-
-    inputs:
-    :: connector [connector object] -> conector a um banco de dados
-
-    output:
-    :: [tuple de str] com (db, tipo de conexão) 
-    """
-
-    connector_class = re.search(r"'(.+?)'", str(type(sql_connector))).group(1).split('.')
-    module, connector_type = connector_class[0].lower(), connector_class[-1].lower()
-    if 'oracle' in module:
-        db = 'oracle'
-    elif 'sqlite' in module:
-        db = 'sqlite'
-    else:
-        try:
-            db = re.search(r"(.+?)://", str(sql_connector)).group(1).split('(')[1]
-        except AttributeError:
-            print(f'Conector inválido: {sql_connector}')
-            raise
-    return db, module, connector_type
-
-    try:
-        a = re.search(r"^<(.+?) ", str(sql_connector)).group(1).split('.')[0]
-    except AttributeError:
-        try:
-            a = re.search(r"(.+?)://", str(sql_connector)).group(1).split('(')[1]
-        except AttributeError:
-            print(f'Conector inválido: {sql_connector}')
-            raise
-
-
-def get_cursor(sql_connector):
-
-    db, module, connector_type = get_db_module_connectortype(sql_connector)
-    db, module, connector_type = db.lower(), module.lower(), connector_type.lower() 
-
-    implemented = ('cx_oracle', 'sqlite3', 'sqlalchemy')
-    if module not in implemented:
-        raise NotImplementedError
-    if module == 'sqlalchemy':
-        if connector_type == 'engine':
-            cursor = sql_connector.connect()
-        elif connector_type == 'connection':
-            cursor = sql_connector
-    else:
-        if connector_type == 'connection':
-            cursor = sql_connector.cursor()
-        elif connector_type == 'cursor':
-            cursor = sql_connector
-    return cursor
-
-
-def format_columns(**kwargs):
-
-    cols_types = kwargs.get('cols_types')
-    if not cols_types:
-        cols = kwargs.get('cols', kwargs.get('columns'))
-        types = kwargs.get('types')
-        assert cols and types, 'Nomes de colunas (cols) e seus tipos (types) devem ser inseridos'
-        assert len(cols) == len(types), 'cols e types devem ter o mesmo tamanho'
-        cols_types = [' '.join(col_typ) for col_typ in zip(cols, types)]
-    elif isinstance(cols_types, (list, tuple)):
-        assert len(cols_types) > 0, 'Lista de colunas e tipos (cols_types) vazia'
-        if isinstance(cols_types[0], (list, tuple)):
-            assert len(cols_types[0]) == 2, f'Valor de cols_types[0] inválido: {cols_types[0]}'
-            cols_types = [f'{col_typ[0]} {col_typ[1]}' for col_typ in cols_types]
-        elif isinstance(cols_types[0], str):
-            pass
-        else:
-            raise ValueError
-    elif isinstance(cols_types, dict):
-        cols_types = [f'{col} {typ}' for col, typ in cols_types.items()]
-    else:
-        raise ValueError
-
-    return ', '.join([ct.upper() for ct in cols_types])
 
 
 #
@@ -211,7 +87,7 @@ def del_connection_info(connection_name, config_filename='connections.json'):
     :: config_filename -> arquivo onde serão salvos os dados de conexão (default: "connections.json") 
     """
 
-    connection_info = get_oracle_connection_info(config_filename='connections.json', v=True)
+    connection_info = get_connection_info(config_filename='connections.json', v=True)
     del connection_info[connection_name.upper()]
     with open(config_filename, 'w') as fp:
         json.dump(connection_info, fp, indent=4)
@@ -234,43 +110,42 @@ def connect_oracle(connection_name=None, *connection_type, **kwargs):
     :: encoding [str] -> encoding a ser utilizado na conexão | default: "utf-8"
 
     output:
-    :: objeto conector ou lista de objetos conectores ao Oracle definido por connection_type,
+    :: objeto conector ou lista de objetos conectores definido por connection_type,
        no caso de uma lista de tipos de conexão, independente da ordem entrada, o retorno será 
-       na ordem: connection > cursor > engine. se connection e cursor forem inseridos, o cursor
-       será obtido da connection e não de um objeto criado em separado. 
+       na ordem: connection > cursor > engine.
     """  
-    # criando a lista de conexões a serem retornadas
-    if not connection_type:
-        connection_type = 'connection'
-    elif len(connection_type) == 1:
-        connection_type = connection_type[0]
-    connection_type = format_connection_type(connection_type)
+
+    # obtendo lista de conexões a serem retornadas
+    connection_type = helpers.get_connection_type(connection_type, kwargs)
 
     # obtendo enconding
-    encoding = kwargs.get('encoding', 'utf-8')
+    encoding = kwargs.pop('encoding', 'utf-8')
 
     # obtendo dados de conexão
-    if connection_name:
-        connection_info = get_connection_info(connection_name, config_filename=kwargs.get('config_filename', 'connections.json'))
-    elif not 'connection_info' in kwargs: # se o dict for colocado será utilizado, ou seja, deve estar completo
-        connection_info = kwargs
-    else:
-        connection_info = kwargs.get('connection_info')
-        
-    user = connection_info.get('user')
-    password = connection_info.get('password')
-    host = connection_info.get('host')
-    service = connection_info.get('service')
+    connection_string = kwargs.pop('connection_string', None)
+    engine_string = connection_string
+    if not connection_string:
+        if connection_name:
+            connection_info = get_connection_info(connection_name, config_filename=kwargs.get('config_filename', 'connections.json'))
+        elif not 'connection_info' in kwargs: # se o dict for colocado será utilizado, ou seja, deve estar completo
+            connection_info = kwargs
+        else:
+            connection_info = kwargs.get('connection_info')
+            
+        user = connection_info.get('user')
+        password = connection_info.get('password')
+        host = connection_info.get('host')
+        service = connection_info.get('service')
 
-    # verificando se temos todos os dados para conexão
-    assert user, "User missing"
-    assert password, "Password missing"
-    assert host, "Host missing"
-    assert service, "Service missing"
+        # verificando se temos todos os dados para conexão
+        assert user, "User missing"
+        assert password, "Password missing"
+        assert host, "Host missing"
+        assert service, "Service missing"
 
-    # construindo strings de conexão
-    connection_string = f'{user}/{password}@{host}:1521/{service}'
-    engine_string = 'oracle://' + connection_string.replace('/', ':', 1)
+        # construindo strings de conexão
+        connection_string = f'{user}/{password}@{host}:1521/{service}'
+        engine_string = 'oracle://' + connection_string.replace('/', ':', 1)
 
     # criando os objetos de conexão
     cnxn_objects = []
@@ -311,14 +186,36 @@ def connect_sas_bigdata(*connection_type, encoding='utf-8', config_filename='con
     return connect_oracle('sas_bigdata', connection_type, encoding=encoding, config_filename='connections.json')
 
 
-def connect_sqlite(dbpath, **kwargs):
+def connect_sqlite(connection_name=None, *connection_type, **kwargs):
+    """
+    Conexão com banco de dados SQLite
 
-    # criando a lista de conexões a serem retornadas
-    connection_type = format_connection_type(kwargs.get('connection_type', ['connection', 'cursor']))
+    inputs:
+    :: connection_name [str] -> nome da conexão 
+    :: *connection_type [str] -> define o tipo de conexão retornado | "connection" (default), "cursor", "engine", "all"
+    :: config_filename -> arquivo onde serão salvos os dados de conexão (default: "connections.json")
+    :: dbpath -> path para arquivo .db
+
+    output:
+    :: objeto conector ou lista de objetos conectores definido por connection_type.
+       no caso de uma lista de tipos de conexão, independente da ordem entrada, o retorno será 
+       na ordem: connection > cursor > engine.
+    """  
+
+    # obtendo lista de conexões a serem retornadas
+    connection_type = helpers.get_connection_type(connection_type, kwargs)
 
     # construindo strings de conexão
-    connection_string = dbpath
-    engine_string = f'sqlite:///{dbpath}'
+    if connection_name:
+        connection_info = get_connection_info(connection_name, config_filename=kwargs.get('config_filename', 'connections.json'))
+        connection_string = connection_info['dbpath']
+    else:
+        connection_string = kwargs.pop('dbpath', None)
+        assert connection_string, 'dbpath deve ser fornecido'
+
+    if not connection_string[-3:] == '.db':
+        connection_string += '.db'    
+    engine_string = f'sqlite:///{connection_string}'
 
     # criando os objetos de conexão
     cnxn_objects = []
@@ -345,85 +242,113 @@ def connect_sqlite(dbpath, **kwargs):
 # ORACLE
 #
 
-def find_table_oracle(sql_connector, partial_table_name=None, sbd_only=False, sbd_owned=False):
+def find_table(sql_connector, partial_table_name=None, fetch='all', tables='dba'):
 
-    oracle_connection, oracle_cursor = connect_sas_bigdata(['connection', 'cursor'])
-
-    if sbd_only or sbd_owned:
-        assert bool(sbd_only) != bool(sbd_owned), "sdb_only and sdb_owned can't be True at the same time"
-        if sbd_only:
-            t = 'all'
-        elif sbd_owned:
-            t = 'user'
-    else:
-        t = 'dba'
+    cursor = helpers.get_cursor(sql_connector)
+    db, _, _ = helpers.get_db_module_connectortype(sql_connector)
+    db = db.lower()
 
     if not partial_table_name:
         partial_table_name = ''
-    q = f"""SELECT {"owner, " if not sbd_owned else "'SAS_BIGDATA', "} table_name FROM {t}_tables where table_name like \'%{partial_table_name.upper()}%\'"""
+
+    if db == 'oracle':
+        q = f"""
+        SELECT 
+            {"owner, " if not tables=='user' else ""}table_name 
+        FROM 
+            {tables}_tables where table_name like \'%{partial_table_name.upper()}%\'
+        """
+
+    elif db == 'sqlite':
+        q = f"""
+        SELECT 
+            name 
+        FROM 
+            sqlite_master 
+        WHERE 
+            type='table' AND name like '%{partial_table_name}%'"""
+
+    else:
+        raise NotImplementedError
+
+    if fetch == 'all':
+        matches = cursor.execute(q).fetchall()
+    elif not fetch:
+        matches = cursor.execute(q)
+    elif isinstance(fetch, int):
+        matches = cursor.execute(q).fetchmany(fetch)
+    return matches
+
+
+def table_exists(sql_connector, table_name, fetch='all', tables='dba', owner=None):
     
-    matches = oracle_cursor.execute(q).fetchall()
-    # matches = [(x[0], x[1]) for x in oracle_cursor]
-    oracle_connection.close()
+    cursor = helpers.get_cursor(sql_connector)
+    db, _, _ = helpers.get_db_module_connectortype(sql_connector)
+    db = db.lower()
+
+    if '.' in table_name:
+            owner, table_name = table_name.split('.')
+
+    if db == 'oracle':
+        q = f"""
+        select 
+            count(*)
+        from 
+            {tables}_objects
+        where 
+            object_type in ('TABLE', 'VIEW')
+        and 
+            object_name = '{table_name.upper()}'
+            {f"and owner = '{owner.upper()}'" if owner else ''}
+        """
+    
+    elif db == 'sqlite':
+        q = f"""
+        SELECT 
+            count(*) 
+        FROM 
+            sqlite_master 
+        WHERE 
+            type='table' AND name = '{table_name}'
+        """
+    
+    else:
+        raise NotImplementedError
+
+    return bool(cursor.execute(q).fetchone()[0])
+
+
+def find_column(sql_connector, partial_column_name, partial_table_name=None, tables='dba', fetch='all'):
+
+    cursor = helpers.get_cursor(sql_connector)
+    db, _, _ = helpers.get_db_module_connectortype(sql_connector)
+    db = db.lower()
+
+    if db == 'oracle':
+        q = f"""
+        select 
+            {"tabs.owner, " if not tables=='user' else ""}tabs.table_name, cols.column_name
+        from 
+            {tables}_tables tabs
+        INNER JOIN
+            {tables}_tab_cols cols
+            ON tabs.table_name = cols.table_name
+        WHERE 
+            tabs.table_name LIKE '%{partial_table_name.upper() if partial_table_name else ''}%'
+            AND cols.column_name LIKE '%{partial_column_name.upper()}%'
+        """
+    else:
+        raise NotImplementedError
+
+    if fetch == 'all':
+        matches = cursor.execute(q).fetchall()
+    elif not fetch:
+        matches = cursor.execute(q)
+    elif isinstance(fetch, int):
+        matches = cursor.execute(q).fetchmany(fetch)
     return matches
 
 
-def find_column_oracle(partial_column_name, partial_table_name=None, sbd_only=False, sbd_owned=False):
-    oracle_connection, oracle_cursor = connect_sas_bigdata(['connection', 'cursor'])
-
-    if sbd_only or sbd_owned:
-        assert bool(sbd_only) != bool(sbd_owned), "sdb_only and sdb_owned can't be True at the same time"
-        if sbd_only:
-            t = 'all'
-        elif sbd_owned:
-            t = 'user'
-    else:
-        t = 'dba'
-
-    q = f"""
-    select 
-        {"tabs.owner, " if not sbd_owned else "'SAS_BIGDATA', "}tabs.table_name, cols.column_name
-    from 
-        {t}_tables tabs
-    INNER JOIN
-        {t}_tab_cols cols
-        ON tabs.table_name = cols.table_name
-    WHERE 
-        tabs.table_name LIKE '%{partial_table_name.upper() if partial_table_name else ''}%'
-        AND cols.column_name LIKE '%{partial_column_name.upper()}%'
-    """
-
-    oracle_cursor.execute(q)
-    matches = oracle_cursor.execute(q).fetchall()
-    oracle_connection.close()
-    return matches
-
-
-def table_exists(table_name, sbd_only=False, sbd_owned=False):
-    oracle_connection, oracle_cursor = connect_sas_bigdata(['connection', 'cursor'])
-
-    if sbd_only or sbd_owned:
-        assert bool(sbd_only) != bool(sbd_owned), "sdb_only and sdb_owned can't be True at the same time"
-        if sbd_only:
-            t = 'all'
-        elif sbd_owned:
-            t = 'user'
-    else:
-        t = 'dba'
-
-    q = f"""
-    select 
-        count(*)
-    from 
-        {t}_objects
-    where 
-        object_type in ('TABLE','VIEW')
-    and 
-        object_name = '{table_name.upper()}'
-    """
-
-    oracle_cursor.execute(q)
-    return bool(oracle_cursor.fetchone()[0])
 
 
 #
@@ -442,11 +367,11 @@ def create_table(table_name, sql_connector, **kwargs):
     """Cria tabela com nome table_name por meio do cursor"""
 
     # a função aceita qualquer tipo de conexão. aqui extrai-se o cursor necessário para criar-se a tabela
-    cursor = get_cursor(sql_connector)
+    cursor = helpers.get_cursor(sql_connector)
     assert cursor
 
     # montando a query
-    columns = format_columns(**kwargs)
+    columns = helpers.format_columns(**kwargs)
     if_not_exists = kwargs.get('if_not_exists', False) # por padrão apenas cria sem checar se já existe ou não
     q = f'CREATE TABLE {"IF NOT EXISTS " if if_not_exists else ""}{table_name} ({columns})'
     
@@ -457,7 +382,7 @@ def create_table(table_name, sql_connector, **kwargs):
 def drop_table(table_name, sql_connector):
 
     # a função aceita qualquer tipo de conexão. aqui extrai-se o cursor necessário para dropar-se a tabela
-    cursor = get_cursor(sql_connector)
+    cursor = helpers.get_cursor(sql_connector)
     assert cursor
 
     q = f'DROP TABLE {table_name}'
@@ -470,8 +395,8 @@ def insert_rows(rows, cols, table_name, sql_connector, db='oracle'):
     """
 
     try:
-        db, module, connection = get_db_module_connectortype(sql_connector)
-        cursor = get_cursor(sql_connector)
+        db, module, connection = helpers.get_db_module_connectortype(sql_connector)
+        cursor = helpers.get_cursor(sql_connector)
     except:
         print(f'sql_connector inválido: {sql_connector}')
         raise
