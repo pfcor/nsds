@@ -2,16 +2,13 @@ import pkg_resources
 import json
 import re
 import os
-
+import cx_Oracle, sqlite3, sqlalchemy
 
 # # # # # # # # # #
 #                 #
 #   DB FUNCTIONS  #
 #                 #
 # # # # # # # # # #
-
-
-import cx_Oracle, sqlite3, sqlalchemy
 
 
 #
@@ -38,8 +35,10 @@ def format_connection_type(connection_type):
             raise ValueError
         else:
             connection_type = [connection_type]
+
     elif isinstance(connection_type, (list, tuple)): # se já for inserido list/tuple
         connection_type = list(set(connection_type)) # excluindo duplicatas
+
         for i, ct in enumerate(connection_type.copy()):
             try:
                 ct = ct.lower()
@@ -50,10 +49,13 @@ def format_connection_type(connection_type):
             if ct not in ['connection', 'cursor', 'engine']:
                 print(f'invalid connection_type input: {ct}')
                 raise ValueError
-    connection_type.sort() 
-    if connection_type[:2] == ['connection', 'cursor']:
-        connection_type = ['cc'] + connection_type[2:] # cc (connection/cursor) é unificado para garantir que o cursor retornado foi criado a partir da conexão também retornada 
+
+        connection_type.sort() 
+        if connection_type[:2] == ['connection', 'cursor']:
+            connection_type = ['cc'] + connection_type[2:] # cc (connection/cursor) é unificado para garantir que o cursor retornado foi criado a partir da conexão também retornada 
+    
     return connection_type
+
 
 def get_db_module_connectortype(sql_connector):
     """
@@ -89,6 +91,7 @@ def get_db_module_connectortype(sql_connector):
             print(f'Conector inválido: {sql_connector}')
             raise
 
+
 def get_cursor(sql_connector):
 
     db, module, connector_type = get_db_module_connectortype(sql_connector)
@@ -108,6 +111,7 @@ def get_cursor(sql_connector):
         elif connector_type == 'cursor':
             cursor = sql_connector
     return cursor
+
 
 def format_columns(**kwargs):
 
@@ -139,80 +143,94 @@ def format_columns(**kwargs):
 # CONFIG
 #
 
-def save_oracle_connection_info(**kwargs):
-    
-    if not 'connection_info' in kwargs: # se o dict for colocado será utilizado, ou seja, deve estar completo
-        user = kwargs.get('schema')
-        user = kwargs.get('user')
-        password = kwargs.get('password')
-        host = kwargs.get('host')
-        service = kwargs.get('service')
-
-        assert user, "User missing"
-        assert password, "Password missing"
-        assert host, "Host missing"
-        assert service, "Service missing"
-
-        new_connection_info = {'user': user, 'password': password, 'host': host, 'service': service}
-    
-    else:
-        new_connection_info = kwargs.get('connection_info')
-
-    try:
-        connection_info = get_oracle_connection_info(v=False)
-    except:
-        connection_info = {}
-
-    connection_info.update({user.upper(): new_connection_info})
-
-    filename = kwargs.get('filename', 'oracle_connection_config.json')
-    with open(filename, 'w') as fp:
-        json.dump(connection_info, fp, indent=4)
-
-def del_oracle_connection_info(schema, filename='oracle_connection_config.json'):
-    connection_info = get_oracle_connection_info()
-    del connection_info[schema.upper()]
-    with open(filename, 'w') as fp:
-        json.dump(connection_info, fp, indent=4)
-
-def get_oracle_connection_info(schema=None, filename='oracle_connection_config.json', v=True):
+def get_connection_info(connection_name=None, config_filename='connections.json', v=True):
     """
-    Obtém dados de conexão para o schema no Oracle.
+    Obtém dados de conexão dada por connection name guardada no arquivo config_filename.
+
+    inputs:
+    :: connection_name [str] -> nome da conexão
+    :: config_filename [str] -> nome do arquivo com os dados de conexão
 
     output:
-    :: [dict] com dados de conexão "user", "password", "host" e "service"
+    :: [dict] com dados de conexão salvos no arquivo (e.g. "user", "password", "host" e "service")
     """
     try:
-        with open(filename) as config_file:
-            oracle_connection_info = json.loads(config_file.read())
+        with open(config_filename) as config_file:
+            connection_info = json.loads(config_file.read())
+
+        if connection_name:
+            return connection_info[connection_name.upper()]
+        else:
+            return connection_info
+
     except FileNotFoundError:
         if v:
-            print(f'Arquivo {filename} não encontrado. Verificar se está na mesma pasta do script')
+            print(f'Arquivo {config_filename} não encontrado. Verificar se está na mesma pasta do script')
+        raise
+    except KeyError:
+        if v:
+            print(f'Conexão {connection_name} não encontrada. Verificar se já foi salva utilizando')
         raise
     
     # resource_package = __name__
     # resource_path = '/'.join(('oracle_connection_config.json',))
     # print(pkg_resources.resource_string(resource_package, resource_path))
     # oracle_connection_info = json.loads(pkg_resources.resource_string(resource_package, resource_path).decode('utf-8'))
-    
-    if schema:
-        return oracle_connection_info[schema.upper()]
-    else:
-        return oracle_connection_info
+
+
+def save_connection_info(connection_name, **kwargs):
+    """
+    Salva informações de conexão com bancos de dados em um arquivo json
+
+    inputs:
+    :: user, password, host, service, schema, etc... [str] -> infos de conexão inseridas individualmente
+    :: connection_string [str] -> se houver, será utilizada prioritariamente
+    :: connection_name [str] -> nome da conexão 
+    :: flavor [str] -> banco utilizado ('oracle', 'sqlite') 
+    :: config_filename -> arquivo onde serão salvos os dados de conexão (default: connections.json)
+    """
+    config_filename = kwargs.pop('config_filename', 'connections.json')
+
+    try:
+        connection_info = get_connection_info(config_filename=config_filename, v=False)
+    except:
+        connection_info = {}
+    finally:
+        connection_info.update({connection_name.upper(): {k.lower(): v for k, v in kwargs.items()}})
+
+    with open(config_filename, 'w') as fp:
+        json.dump(connection_info, fp, indent=4)
+
+
+def del_connection_info(connection_name, config_filename='connections.json'):
+    """
+    Remove informações de conexão do connection_name no arquivo config_filename
+
+    inputs:
+    :: connection_name [str] -> nome da conexão 
+    :: config_filename -> arquivo onde serão salvos os dados de conexão (default: "connections.json") 
+    """
+
+    connection_info = get_oracle_connection_info(config_filename='connections.json', v=True)
+    del connection_info[connection_name.upper()]
+    with open(config_filename, 'w') as fp:
+        json.dump(connection_info, fp, indent=4)
 
 
 #
-# ORACLE
+# CONEXÃO
 #
 
-def connect_oracle(**kwargs):
+def connect_oracle(connection_name=None, *connection_type, **kwargs):
     """
     Conexão com banco de dados Oracle
 
     inputs:
+    :: connection_name [str] -> nome da conexão 
+    :: *connection_type [str] -> define o tipo de conexão retornado | "connection" (default), "cursor", "engine", "all"
+    :: config_filename -> arquivo onde serão salvos os dados de conexão (default: "connections.json")
     :: connection_info [dict] -> dicionario com campos "user", "password", "host" e "service"
     :: user, password, host, service [str] -> infos de conexão inseridas individualmente
-    :: connection_type [str ou list] -> define o tipo de conexão retornado | ["connection" (default), "cursor", "engine", "all"]
     :: encoding [str] -> encoding a ser utilizado na conexão | default: "utf-8"
 
     output:
@@ -220,16 +238,21 @@ def connect_oracle(**kwargs):
        no caso de uma lista de tipos de conexão, independente da ordem entrada, o retorno será 
        na ordem: connection > cursor > engine. se connection e cursor forem inseridos, o cursor
        será obtido da connection e não de um objeto criado em separado. 
-    """
-
+    """  
     # criando a lista de conexões a serem retornadas
-    connection_type = format_connection_type(kwargs.get('connection_type', ['connection', 'cursor']))
+    if not connection_type:
+        connection_type = 'connection'
+    elif len(connection_type) == 1:
+        connection_type = connection_type[0]
+    connection_type = format_connection_type(connection_type)
 
     # obtendo enconding
     encoding = kwargs.get('encoding', 'utf-8')
 
     # obtendo dados de conexão
-    if not 'connection_info' in kwargs: # se o dict for colocado será utilizado, ou seja, deve estar completo
+    if connection_name:
+        connection_info = get_connection_info(connection_name, config_filename=kwargs.get('config_filename', 'connections.json'))
+    elif not 'connection_info' in kwargs: # se o dict for colocado será utilizado, ou seja, deve estar completo
         connection_info = kwargs
     else:
         connection_info = kwargs.get('connection_info')
@@ -265,13 +288,14 @@ def connect_oracle(**kwargs):
     
     # retornando objetos de conexão
     if len(cnxn_objects) > 1:
-        return tuple(cnxn for cnxn in cnxn_objects)
+        return tuple(cnxn_objects)
     else:
         return cnxn_objects[0]
 
-def connect_sas_bigdata(connection_type=['connection', 'cursor'], encoding='utf-8'):
+
+def connect_sas_bigdata(*connection_type, encoding='utf-8', config_filename='connections.json'):
     """
-    Conexão com o 'schema' SAS_BIGDATA do time de DS no Oracle. Utiliza o arquivo 'oracle_connection_config.json',
+    Conexão com o 'schema' SAS_BIGDATA do time de DS no Oracle. Utiliza o arquivo 'connections.json',
     que deve estar na mesma pasta deste script.
 
     inputs:
@@ -284,10 +308,45 @@ def connect_sas_bigdata(connection_type=['connection', 'cursor'], encoding='utf-
        na ordem: connection > cursor > engine. se connection e cursor forem inseridos, o cursor
        será obtido da connection e não de um objeto criado em separado. 
     """
-    connection_info = get_oracle_connection_info('sas_bigdata')
-    return connect_oracle(connection_info=connection_info, connection_type=connection_type, encoding=encoding)
+    return connect_oracle('sas_bigdata', connection_type, encoding=encoding, config_filename='connections.json')
 
-def find_table_oracle(partial_table_name=None, sbd_only=False, sbd_owned=False):
+
+def connect_sqlite(dbpath, **kwargs):
+
+    # criando a lista de conexões a serem retornadas
+    connection_type = format_connection_type(kwargs.get('connection_type', ['connection', 'cursor']))
+
+    # construindo strings de conexão
+    connection_string = dbpath
+    engine_string = f'sqlite:///{dbpath}'
+
+    # criando os objetos de conexão
+    cnxn_objects = []
+    for ct in connection_type:
+        if ct == 'cc':
+            connection = sqlite3.connect(connection_string)
+            cursor = connection.cursor()
+            cnxn_objects = [connection, cursor] # podemos fazer isso por a construção da lista de conexões garante 'cc' no primeiro índice
+        elif ct == 'connection':
+            cnxn_objects.append(sqlite3.connect(connection_string))
+        elif ct == 'cursor':
+            cnxn_objects.append(sqlite3.connect(connection_string).cursor())
+        elif ct == 'engine':
+            cnxn_objects.append(sqlalchemy.create_engine(engine_string))
+
+    # retornando objetos de conexão
+    if len(cnxn_objects) > 1:
+        return tuple(cnxn for cnxn in cnxn_objects)
+    else:
+        return cnxn_objects[0]
+
+
+#
+# ORACLE
+#
+
+def find_table_oracle(sql_connector, partial_table_name=None, sbd_only=False, sbd_owned=False):
+
     oracle_connection, oracle_cursor = connect_sas_bigdata(['connection', 'cursor'])
 
     if sbd_only or sbd_owned:
@@ -307,6 +366,7 @@ def find_table_oracle(partial_table_name=None, sbd_only=False, sbd_owned=False):
     # matches = [(x[0], x[1]) for x in oracle_cursor]
     oracle_connection.close()
     return matches
+
 
 def find_column_oracle(partial_column_name, partial_table_name=None, sbd_only=False, sbd_owned=False):
     oracle_connection, oracle_cursor = connect_sas_bigdata(['connection', 'cursor'])
@@ -337,6 +397,7 @@ def find_column_oracle(partial_column_name, partial_table_name=None, sbd_only=Fa
     matches = oracle_cursor.execute(q).fetchall()
     oracle_connection.close()
     return matches
+
 
 def table_exists(table_name, sbd_only=False, sbd_owned=False):
     oracle_connection, oracle_cursor = connect_sas_bigdata(['connection', 'cursor'])
@@ -369,38 +430,13 @@ def table_exists(table_name, sbd_only=False, sbd_owned=False):
 # SQLITE
 #
 
-def connect_sqlite(dbpath, **kwargs):
 
-    # criando a lista de conexões a serem retornadas
-    connection_type = format_connection_type(kwargs.get('connection_type', ['connection', 'cursor']))
 
-    # construindo strings de conexão
-    connection_string = dbpath
-    engine_string = f'sqlite:///{dbpath}'
-
-    # criando os objetos de conexão
-    cnxn_objects = []
-    for ct in connection_type:
-        if ct == 'cc':
-            connection = sqlite3.connect(connection_string)
-            cursor = connection.cursor()
-            cnxn_objects = [connection, cursor] # podemos fazer isso por a construção da lista de conexões garante 'cc' no primeiro índice
-        elif ct == 'connection':
-            cnxn_objects.append(sqlite3.connect(connection_string))
-        elif ct == 'cursor':
-            cnxn_objects.append(sqlite3.connect(connection_string).cursor())
-        elif ct == 'engine':
-            cnxn_objects.append(sqlalchemy.create_engine(engine_string))
-
-    # retornando objetos de conexão
-    if len(cnxn_objects) > 1:
-        return tuple(cnxn for cnxn in cnxn_objects)
-    else:
-        return cnxn_objects[0]
 
 #
 # OPERATIONS
 #
+
 
 def create_table(table_name, sql_connector, **kwargs):
     """Cria tabela com nome table_name por meio do cursor"""
@@ -417,6 +453,7 @@ def create_table(table_name, sql_connector, **kwargs):
     # construíndo a tabela
     cursor.execute(q)
 
+
 def drop_table(table_name, sql_connector):
 
     # a função aceita qualquer tipo de conexão. aqui extrai-se o cursor necessário para dropar-se a tabela
@@ -425,6 +462,7 @@ def drop_table(table_name, sql_connector):
 
     q = f'DROP TABLE {table_name}'
     cursor.execute(q)
+
 
 def insert_rows(rows, cols, table_name, sql_connector, db='oracle'):
     """
@@ -455,6 +493,7 @@ def insert_rows(rows, cols, table_name, sql_connector, db='oracle'):
 
     cursor.executemany(q, rows)
 
+
 def insert_df(df, table_name, sql_connector, if_exists='fail'):
 
     columns = [c.upper() for c in df.columns]
@@ -473,6 +512,7 @@ def insert_df(df, table_name, sql_connector, if_exists='fail'):
     
     insert_rows(table_name=table_name, sql_connector=sql_connector, cols=columns, rows=rows)
     sql_connector.commit()
+
 
 def get_types_pd2oracle(df):
 

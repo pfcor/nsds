@@ -4,4 +4,4 @@ __version__ = '0.1.0'
 __author__ = 'Pedro Correia <pedro.correia@netshoes.com>'
 __all__ = []
 
-from . import utils
+from . import db_utils
