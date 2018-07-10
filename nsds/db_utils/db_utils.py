@@ -15,6 +15,8 @@ import cx_Oracle, sqlite3, sqlalchemy
 
 def teste():
     print('TESTE !2!')
+def blobs(a='a'):
+    print(a+'_blobs')
 
 #
 # CONFIG
