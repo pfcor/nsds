@@ -239,7 +239,7 @@ def connect_sqlite(connection_name=None, *connection_type, **kwargs):
 
 
 #
-# ORACLE
+# CONSULTA
 #
 
 def find_table(sql_connector, partial_table_name=None, fetch='all', tables='dba'):
@@ -349,19 +349,9 @@ def find_column(sql_connector, partial_column_name, partial_table_name=None, tab
     return matches
 
 
-
-
-#
-# SQLITE
-#
-
-
-
-
 #
 # OPERATIONS
 #
-
 
 def create_table(table_name, sql_connector, **kwargs):
     """Cria tabela com nome table_name por meio do cursor"""
@@ -383,7 +373,6 @@ def drop_table(table_name, sql_connector):
 
     # a função aceita qualquer tipo de conexão. aqui extrai-se o cursor necessário para dropar-se a tabela
     cursor = helpers.get_cursor(sql_connector)
-    assert cursor
 
     q = f'DROP TABLE {table_name}'
     cursor.execute(q)
