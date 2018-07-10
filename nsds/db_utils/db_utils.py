@@ -13,7 +13,8 @@ import cx_Oracle, sqlite3, sqlalchemy
 #                 #
 # # # # # # # # # #
 
-
+def blobs(a='a'):
+    print(a+'_blobs')
 
 #
 # CONFIG
