@@ -14,7 +14,7 @@ import cx_Oracle, sqlite3, sqlalchemy
 # # # # # # # # # #
 
 def teste():
-    print('TESTE!')
+    print('TESTE !2!')
 
 #
 # CONFIG
