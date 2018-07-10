@@ -13,7 +13,8 @@ import cx_Oracle, sqlite3, sqlalchemy
 #                 #
 # # # # # # # # # #
 
-
+def teste():
+    print('TESTE!')
 
 #
 # CONFIG
